@@ -1,0 +1,67 @@
+PATHS:
+  DATA_TABLE: 'data/exampleData.csv'
+  HEATMAPS: 'img/heatmaps'
+  LOGS: 'results/logs/'
+  IMAGES: 'results/figures/'
+  MODEL_WEIGHTS: 'results/models/'
+  MODEL_TO_LOAD: 'results/models/example_model.h5'
+  CLASS_NAME_MAP: 'data/serializations/class_name_map.pkl'
+  BATCH_PREDS: 'results/predictions/'
+  METRICS: './results/metrics/'
+  EXPERIMENTS: './results/experiments/'
+
+DATA:
+  IMG_DIM: [128, 128]
+  VAL_SPLIT: 0.1
+  TEST_SPLIT: 0.1
+  CLASSES: ['class_1', 'class_2']   # Classes for binary classification
+
+TRAIN:
+  MODEL_DEF: 'example_model'
+  N_CLASSES: 2
+  BATCH_SIZE: 256
+  EPOCHS: 15
+  PATIENCE: 15
+  MIXED_PRECISION: false                         # Necessary for training with Tensor Cores
+  N_FOLDS: 10
+  DATA_AUG:
+    ZOOM_RANGE: 0.1
+    HORIZONTAL_FLIP: true
+    WIDTH_SHIFT_RANGE: 0.2
+    HEIGHT_SHIFT_RANGE: 0.2
+    SHEAR_RANGE: 10
+    ROTATION_RANGE: 45
+    BRIGHTNESS_RANGE: [0.7, 1.3]
+  HPARAM_SEARCH:
+    N_EVALS: 10
+    HPARAM_OBJECTIVE: 'auc'
+
+HPARAMS:
+  MODEL1:
+    LR: 0.001
+    DROPOUT: 0.35
+    L2_LAMBDA: 0.0001
+    NODES_DENSE0: 32
+    FROZEN_LAYERS: [0, 1, 2, 3, 4, 5, 6]
+  MODEL2:
+    LR: 0.01
+    DROPOUT: 0.5
+    L2_LAMBDA: 0.01
+    NODES_DENSE0: 64
+    FROZEN_LAYERS: []
+
+HPARAM_SEARCH:
+  MODEL1:
+    LR:
+      TYPE: 'float_log'
+      RANGE: [0.00001, 0.001]
+    DROPOUT:
+      TYPE: 'float_uniform'
+      RANGE: [0.0, 0.5]
+  MODEL2:
+    LR:
+      TYPE: 'float_log'
+      RANGE: [ 0.00001, 0.001 ]
+    DROPOUT:
+      TYPE: 'float_uniform'
+      RANGE: [0.0, 0.5]
