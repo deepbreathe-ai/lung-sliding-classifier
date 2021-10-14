@@ -29,4 +29,8 @@ def train_model(model_def, hparams, preprocessing_fn=(lambda x: x), save_weights
     val_set = preprocessor.prepare(val_set, shuffle=False, augment=False)
     test_set = preprocessor.prepare(test_set, shuffle=False, augment=False)
 
+    print(train_set.element_spec)
+    print(val_set.element_spec)
+    print(test_set.element_spec)
+
 train_model(None, None)
