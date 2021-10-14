@@ -65,12 +65,12 @@ npz_dir = cfg['PREPROCESS']['PATHS']['NPZ']
 
 paths1 = []
 for index, row in sliding_df.iterrows():
-    paths1.append(os.path.join(os.getcwd(), 'data/', npz_dir, 'sliding/', row['id'] + '.npz'))
+    paths1.append(os.path.join(os.getcwd(), 'data\\', npz_dir, 'sliding\\', row['id'] + '.npz'))
 sliding_df['filename'] = paths1
 
 paths0 = []
 for index, row in no_sliding_df.iterrows():
-    paths0.append(os.path.join(os.getcwd(), 'data/', npz_dir, 'no_sliding/', row['id'] + '.npz'))
+    paths0.append(os.path.join(os.getcwd(), 'data\\', npz_dir, 'no_sliding\\', row['id'] + '.npz'))
 no_sliding_df['filename'] = paths0
 
 # Vertically concatenate dataframes

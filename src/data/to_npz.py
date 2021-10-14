@@ -55,7 +55,16 @@ def video_to_frames_strided(path, orig_id, patient_id, df_rows, stride=cfg['PARA
     num_mini_clips = len(set) // seq_length  # rounded down
     for i in range(num_mini_clips):
       df_rows.append([orig_id + '_' + str(counter), patient_id])
-      np.savez(write_path + '_' + str(counter), frames=set[i*seq_length:i*seq_length+seq_length])
+      vid = np.array(set[i*seq_length:i*seq_length+seq_length])
+
+      fps = 30
+      size = (vid.shape[1], vid.shape[2])
+      out = cv2.VideoWriter(write_path + '_' + str(counter) + '.mp4', cv2.VideoWriter_fourcc(*'mp4v'), fps, size)
+
+      for i in range(len(vid)):
+        out.write(vid[i])
+      out.release()
+      #np.savez(write_path + '_' + str(counter), frames=set[i*seq_length:i*seq_length+seq_length])
       counter += 1
 
   return
@@ -85,7 +94,18 @@ def video_to_frames_contig(path, orig_id, patient_id, df_rows, seq_length=cfg['P
       # The id of the xth mini-clip from a main clip is the id of the main clip with _x appended to it
       if counter == 0:
         df_rows.append([orig_id + '_' + str(mini_clip_num), patient_id])  # append to what will make output dataframes
-        np.savez(write_path + '_' + str(mini_clip_num), frames=frames)  # output
+
+        vid = np.array(frames)
+
+        fps = 30
+        size = (vid.shape[1], vid.shape[2])
+        out = cv2.VideoWriter(write_path + '_' + str(counter) + '.mp4', cv2.VideoWriter_fourcc(*'mp4v'), fps, size)
+
+        for i in range(len(vid)):
+          out.write(vid[i])
+        out.release()
+
+
         counter = seq_length
         mini_clip_num += 1
         frames = []
