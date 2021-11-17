@@ -21,6 +21,7 @@ def download(df, sliding, fr_rows, video_out_root_folder=cfg['PATHS']['UNMASKED_
     :param video_out_root_folder: The folder path for outputting the downloaded videos.
     :param csv_out_folder: The folder path for outputting the .csv.
     '''
+    local_paths = []
 
     # Optionally sort, then shuffle the df (and therefore the saved csv) according to config
     shuffle = cfg['PARAMS']['SHUFFLE']
@@ -46,10 +47,6 @@ def download(df, sliding, fr_rows, video_out_root_folder=cfg['PATHS']['UNMASKED_
     if not os.path.exists(csv_out_folder):
             os.makedirs(csv_out_folder)
 
-    csv_out_path = os.path.join(csv_out_folder, sliding_str + '.csv')
-    print('Writing to ' + csv_out_path + "...")
-    df.to_csv(csv_out_path, index=False)
-
     # Make video root folder if it doesn't exist
     if not os.path.exists(video_out_root_folder):
             os.makedirs(video_out_root_folder)
@@ -63,6 +60,7 @@ def download(df, sliding, fr_rows, video_out_root_folder=cfg['PATHS']['UNMASKED_
     # Iterate through df to download the videos and preserve their id in the name
     for index, row in df.iterrows():
         out_path = video_out_folder + row['id'] + '.mp4'
+
         urllib.request.urlretrieve(row['s3_path'], out_path)
 
         # Get frame rate
@@ -76,6 +74,17 @@ def download(df, sliding, fr_rows, video_out_root_folder=cfg['PATHS']['UNMASKED_
         else:
             # Add to frame rate CSV rows
             fr_rows.append([row['id'], fr])
+            local_paths.append(out_path)
+    
+    good_ids = pd.Series([row[0] for row in fr_rows])
+    local_paths = video_out_folder + good_ids + '.mp4'
+    df = df[df['id'].isin(good_ids)]
+    df = df.reset_index()
+    df = df.drop('index', axis=1)
+    df['local_path'] = local_paths
+    csv_out_path = os.path.join(csv_out_folder, sliding_str + '.csv')
+    print('Writing to ' + csv_out_path + "...")
+    df.to_csv(csv_out_path, index=False)
 
 
 # Get database configs
