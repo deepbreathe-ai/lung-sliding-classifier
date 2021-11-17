@@ -13,11 +13,11 @@ PREPROCESS:
     METHOD: 'Contiguous'  # 'Stride' or 'Contiguous'
     WINDOW: 90 # Mini-clip length
     STRIDE: 1  # 1 = contiguous (METHOD='Contiguous' param overrides this)
-    IMG_SIZE: [224, 224]
+    IMG_SIZE: [181, 181]
 
   PATHS:
     UNMASKED_VIDEOS: 'raw_videos/'
-    MASKED_VIDEOS: 'masked_videos/'
+    MASKED_VIDEOS: 'cropped_videos/'
     FLOW_VIDEOS: 'flow_videos/'
     CSVS_OUTPUT: 'csvs/'
     NPZ: 'npzs/'

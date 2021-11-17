@@ -86,13 +86,21 @@ def video_to_frames_downsampled(orig_id, patient_id, df_rows, cap, fr, seq_lengt
 
   index = 0  # Position in 'frames' array where the next frame is to be appended
 
+  cap_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+  cap_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+  new_width = tuple(resize)[0]
+  height_resize = int((cap_height / cap_width) * new_width)
+  pad_top = int((tuple(resize)[1] - height_resize) / 2)
+  pad_bottom = tuple(resize)[1] - height_resize - pad_top
+
   try:
     while True:
       ret, frame = cap.read()
       if not ret:
         break
       if index == 0:  # Add every nth frame only
-        frame = cv2.resize(frame, tuple(resize))
+        frame = cv2.resize(frame, (new_width, height_resize))
+        frame = cv2.copyMakeBorder(frame, pad_top, pad_bottom, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
         frames.append(frame)
       index = (index + 1) % stride
 
@@ -127,6 +135,14 @@ def video_to_frames_contig(orig_id, patient_id, df_rows, cap, seq_length=cfg['PA
   counter = seq_length
   mini_clip_num = 1  # nth mini-clip being made from the main clip
   frames = []
+
+  cap_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+  cap_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+  new_width = tuple(resize)[0]
+  height_resize = int((cap_height / cap_width) * new_width)
+  pad_top = int((tuple(resize)[1] - height_resize) / 2)
+  pad_bottom = tuple(resize)[1] - height_resize - pad_top
+
   try:
     while True:
 
@@ -143,7 +159,8 @@ def video_to_frames_contig(orig_id, patient_id, df_rows, cap, seq_length=cfg['PA
       if not ret:
         break
 
-      frame = cv2.resize(frame, tuple(resize))
+      frame = cv2.resize(frame, (new_width, height_resize))
+      frame = cv2.copyMakeBorder(frame, pad_top, pad_bottom, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
       frames.append(frame)
 
       counter -= 1
