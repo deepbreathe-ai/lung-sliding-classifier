@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import argparse
 import imageio
+import yaml
 from PIL import Image
 from multiprocessing import Pool
 
@@ -12,6 +13,7 @@ videos_root = ""
 data_root = ""
 new_dir = ""
 
+cfg = yaml.full_load(open(os.path.join(os.getcwd(),"../../config.yml"), 'r'))['PREPROCESS']
 
 def to_img(raw_flow, bound):
 
@@ -87,6 +89,11 @@ def dense_flow(args):
     frame_num = 0
     image, prev_image, gray, prev_gray = None, None, None, None
     num0 = 0
+
+    cap_width = videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)
+    cap_height = videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    new_width = cfg['PARAMS']['FLOW_CROP_WIDTH']
+    height_resize = int((cap_height / cap_width) * new_width)
     
     while True:
         frame = videocapture.read()[1]
@@ -95,6 +102,7 @@ def dense_flow(args):
         num0 += 1
         if frame_num == 0:
             prev_image = frame
+            prev_image = cv2.resize(prev_image, (new_width, height_resize))
             prev_gray = cv2.cvtColor(prev_image, cv2.COLOR_RGB2GRAY)
             frame_num += 1
 
@@ -107,6 +115,7 @@ def dense_flow(args):
             continue
         
         image = frame
+        image = cv2.resize(image, (new_width, height_resize))
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         frame_0 = prev_gray
         frame_1 = gray

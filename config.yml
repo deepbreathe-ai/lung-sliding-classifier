@@ -13,7 +13,8 @@ PREPROCESS:
     METHOD: 'Contiguous'  # 'Stride' or 'Contiguous'
     WINDOW: 90 # Mini-clip length
     STRIDE: 1  # 1 = contiguous (METHOD='Contiguous' param overrides this)
-    IMG_SIZE: [181, 181]
+    FLOW_CROP_WIDTH: 90  # Width, in pixels, to crop to before applying flow
+    IMG_SIZE: [90, 90]
 
   PATHS:
     UNMASKED_VIDEOS: 'raw_videos/'

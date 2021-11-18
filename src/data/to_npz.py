@@ -194,7 +194,14 @@ def flow_frames_to_npz_downsampled(path, orig_id, patient_id, df_rows, fr, seq_l
   # Read all flow frames
   for file in os.listdir(path):
     frame = cv2.imread(os.path.join(path, file), 0)
-    frame = cv2.resize(frame, tuple(resize))
+    orig_width = frame.shape[1]  # height dimension should be first
+    orig_height = frame.shape[0]
+    new_width = tuple(resize)[0]
+    height_resize = int((orig_height / orig_width) * new_width)
+    pad_top = int((tuple(resize)[1] - height_resize) / 2)
+    pad_bottom = tuple(resize)[1] - height_resize - pad_top
+    frame = cv2.resize(frame, (new_width, height_resize))
+    frame = cv2.copyMakeBorder(frame, pad_top, pad_bottom, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
     ind = int(file[7:12])  # flow frame number
     if (ind - 1) % stride == 0:  # take every nth flow frame only
       if '_x_' in file:
@@ -236,7 +243,14 @@ def flow_frames_to_npz_contig(path, orig_id, patient_id, df_rows, seq_length=cfg
   # Read all flow frames
   for file in os.listdir(path):
     frame = cv2.imread(os.path.join(path, file), 0)
-    frame = cv2.resize(frame, tuple(resize))
+    orig_width = frame.shape[1]  # height dimension should be first
+    orig_height = frame.shape[0]
+    new_width = tuple(resize)[0]
+    height_resize = int((orig_height / orig_width) * new_width)
+    pad_top = int((tuple(resize)[1] - height_resize) / 2)
+    pad_bottom = tuple(resize)[1] - height_resize - pad_top
+    frame = cv2.resize(frame, (new_width, height_resize))
+    frame = cv2.copyMakeBorder(frame, pad_top, pad_bottom, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
     if '_x_' in file:
       frames_x.append(frame)
     else:
