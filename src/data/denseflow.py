@@ -164,7 +164,7 @@ def parse_args():
     parser.add_argument('--new_dir', default='flows', type=str)
     parser.add_argument('--num_workers', default=4, type=int, help='num of workers to act multi-process')
     parser.add_argument('--step', default=1, type=int, help='gap frames')
-    parser.add_argument('--bound', default=15, type=int, help='set the maximum of optical flow')
+    parser.add_argument('--bound', default=5, type=int, help='set the maximum of optical flow')
     parser.add_argument('--s_', default=0, type=int, help='start id')
     parser.add_argument('--e_', default=13320, type=int, help='end id')
     parser.add_argument('--mode', default='run', type=str, help='set \'run\' if debug done, otherwise, set debug')

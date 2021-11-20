@@ -25,5 +25,5 @@ flow_no_sliding_folder = os.path.join(flow_folder, 'no_sliding/')
 os.makedirs(flow_no_sliding_folder)
 
 # Call optical flow tool
-os.system('python denseflow.py --videos_root=' + masked_sliding_folder + ' --data_root=' + flow_folder + ' --new_dir=sliding --num_workers=1')
-os.system('python denseflow.py --videos_root=' + masked_no_sliding_folder + ' --data_root=' + flow_folder + ' --new_dir=no_sliding --num_workers=1')
+os.system('python denseflow.py --videos_root=' + masked_sliding_folder + ' --data_root=' + flow_folder + ' --new_dir=sliding --num_workers=1 --bound=4')
+os.system('python denseflow.py --videos_root=' + masked_no_sliding_folder + ' --data_root=' + flow_folder + ' --new_dir=no_sliding --num_workers=1 --bound=4')
