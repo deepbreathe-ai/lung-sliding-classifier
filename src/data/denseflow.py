@@ -155,10 +155,10 @@ def dense_flow(args, run_num):
             squared_diff_sum_y += np.sum((flowDTVL1[..., 1] - mean_y) ** 2)
         else:  # Save standardized flows
             if 'no_sliding' in video_path:
-                save_dir = os.path.join('no_sliding/', save_dir)
+                changed_save_dir = os.path.join('no_sliding/', save_dir)
             else:
-                save_dir = os.path.join('sliding/', save_dir)
-            save_flows(flowDTVL1, save_dir, frame_num, bound)  # save flow frames
+                changed_save_dir = os.path.join('sliding/', save_dir)
+            save_flows(flowDTVL1, changed_save_dir, frame_num, bound)  # save flow frames
         
         prev_gray = gray
         frame_num += 1
