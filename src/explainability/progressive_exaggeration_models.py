@@ -101,7 +101,8 @@ class GeneratorModel:
         x = BatchNormalization()(x)
         x = Activation("relu")(x)
         x = Conv2D(self.input_shape[-1], 3, padding="same")(x)
-        generated = Activation("tanh", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
+        # generated = Activation("tanh", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
+        generated = Activation("sigmoid", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
 
         model = Model([input, target], [generated, encoded], name="Generator")
         return model
@@ -125,27 +126,36 @@ class DiscriminatorModel:
         """
         self.input_shape = input_shape
 
-    def resblock(self, input, num_filters, downsample=True, first=False):
+    @staticmethod
+    def get_conv(num_filters, spec_norm=True):
+        conv = Conv2D(num_filters, 3, padding="same")
+        return SpectralNormalization(conv) if spec_norm else conv
+
+    def resblock(self, input, num_filters, downsample=True, first=False, spec_norm=False):
         """
         Residual block for the discriminator model.
         :param input: Input to resblock
         :param num_filters: Number of filters in Conv2D layers
         :param downsample: Boolean flag. Downsampling occurs if True
         :param first: Boolean flag. If False, adds an extra relu at start. Set to True for first resblock in model.
+        :param spec_norm: Boolean flag. If True, spectral normalization applied to convolutional layers.
         :return: Output after passing input through resblock
         """
         if first:  # No initial relu
-            x = SpectralNormalization(Conv2D(num_filters, 3, padding="same"))(input)
+            x = DiscriminatorModel.get_conv(num_filters, spec_norm)(input)
         else:  # Initial relu
             x = Activation("relu")(input)
-            x = SpectralNormalization(Conv2D(num_filters, 3, padding="same"))(x)
+            x = DiscriminatorModel.get_conv(num_filters, spec_norm)(x)
         x = Activation("relu")(x)
-        x = SpectralNormalization(Conv2D(num_filters, 3, padding="same"))(x)
+        x = DiscriminatorModel.get_conv(num_filters, spec_norm)(x)
 
         if downsample:
             x = downsampling(x)
             input = downsampling(input)  # Residual
-            input = SpectralNormalization(Conv2D(num_filters, 1, padding="same"))(input)
+            if spec_norm:
+                input = SpectralNormalization(Conv2D(num_filters, 1, padding="same"))(input)
+            else:
+                input = Conv2D(num_filters, 1, padding="same")(input)
 
         return Add()([x, input])
 
@@ -178,10 +188,11 @@ class DiscriminatorModel:
         :param real_output: Tensor of predictions for real images.
         :param fake_output: Tensor of predictions for fake images.
         """
-        real_loss = tf.reduce_mean(tf.nn.relu(tf.ones_like(real_output) - real_output))
-        fake_loss = tf.reduce_mean(tf.nn.relu(tf.ones_like(fake_output) + fake_output))
-        total_loss = real_loss + fake_loss
-        return total_loss
+        # real_loss = tf.reduce_mean(tf.nn.relu(tf.ones_like(real_output) - real_output))
+        # fake_loss = tf.reduce_mean(tf.nn.relu(tf.ones_like(fake_output) + fake_output))
+        # total_loss = real_loss + fake_loss
+        # return total_loss
+        return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
 
 
 class ExaggerationGan(Model):
@@ -245,6 +256,7 @@ class ExaggerationGan(Model):
             fake_images, _ = self.generator([real_images, target_labels], training=True)
 
             real_pred = self.discriminator(real_images, training=True)
+            # tf.print(real_pred)
             fake_pred = self.discriminator(fake_images, training=True)
 
             d_loss = DiscriminatorModel.loss(real_pred, fake_pred)
@@ -267,7 +279,7 @@ class ExaggerationGan(Model):
         with tf.GradientTape(persistent=True) as tape:
             fake_images, _ = self.generator([real_images, target_labels], training=True)
             fake_pred = self.discriminator(fake_images, training=True)
-            # fake_labels = tf.math.floor(self.pred_model(fake_images) * 10.)
+            # fake_labels = tf.math.floor(self.pred_model(fake_images, training=False) * 10.)
 
             # g_loss = GeneratorModel.loss(fake_pred, target_labels, fake_labels)
             g_loss = GeneratorModel.loss(fake_pred)
