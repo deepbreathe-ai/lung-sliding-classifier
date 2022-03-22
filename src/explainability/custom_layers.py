@@ -6,6 +6,7 @@ from tensorflow.keras.layers import Layer, InputSpec, Embedding, BatchNormalizat
 from tensorflow.keras import backend as K
 
 
+# TODO: Adjust this layer so it works for variable batch size so it doesn't throw errors at epoch end
 class ConditionalBatchNormalization(tf.keras.Model):
     """
     https://github.com/crcrpar/pytorch.sngan_projection/blob/master/links/conditional_batchnorm.py
@@ -13,17 +14,29 @@ class ConditionalBatchNormalization(tf.keras.Model):
     """
 
     def __init__(self, num_classes, units, **kwargs):
+        """
+        Initializes Embedding for use in weights and biases of batch normalization
+        :param num_classes: Number of possible classes
+        :param units: Number of channels in output
+        """
         super().__init__(**kwargs)
-        self.weight_embedding = Embedding(input_dim=num_classes, output_dim=units, input_length=1, embeddings_initializer='ones')
-        self.bias_embedding = Embedding(input_dim=num_classes, output_dim=units, input_length=1, embeddings_initializer='zeros')
+        self.weight_embedding = Embedding(input_dim=num_classes, output_dim=units, input_length=1,
+                                          embeddings_initializer='ones')
+        self.bias_embedding = Embedding(input_dim=num_classes, output_dim=units, input_length=1,
+                                        embeddings_initializer='zeros')
         self.bn = BatchNormalization()
 
     def call(self, inputs, training=None):
-        """Call `Layer`"""
-
+        """
+        This function performs batch normalization when the layer is called
+        :param inputs: (input, class) tuple consisting of input to bn and class numbed respectively
+        :param training: Input to training parameter of batch normalization
+        """
+        # Get class weights and bias for the class number provided
         class_weights = self.weight_embedding(inputs[1])
         class_bias = self.bias_embedding(inputs[1])
 
+        # Ensure class_weights and class_bias are 2D tensors
         if len(class_weights.shape) == 3:
             class_weights = tf.squeeze(class_weights, [1])
         if len(class_bias.shape) == 3:
@@ -31,18 +44,19 @@ class ConditionalBatchNormalization(tf.keras.Model):
 
         output = self.bn(inputs[0], training=training)
 
+        # Ensure class_weights and class_bias are 2D tensors
         if len(class_weights.shape) == 1:
             class_weights = tf.expand_dims(class_weights, 0)
         if len(class_bias.shape) == 1:
             class_bias = tf.expand_dims(class_bias, 0)
 
+        # Expand class_weights and class_bias to 4D tensors
         class_weights = class_weights[:, tf.newaxis, tf.newaxis, :]
         class_bias = class_bias[:, tf.newaxis, tf.newaxis, :]
+
+        # Weight and bias input
         output = class_weights * output + class_bias
         return output
-
-    def compute_output_shape(self, input_shape):
-        return tensor_shape.TensorShape(input_shape[0])
 
 
 class SpectralNormalization(tf.keras.layers.Wrapper):
