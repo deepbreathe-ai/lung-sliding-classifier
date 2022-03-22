@@ -5,9 +5,11 @@ from progressive_exaggeration_models import ExaggerationGan
 import argparse
 import os
 import cv2
+import yaml
 
-from ..models.models import efficientnet
+import models
 
+cfg = yaml.full_load(open(os.path.join(os.getcwd(), 'config.yml'), 'r'))
 input_shape = (224, 96, 3)  # Shape of input of GAN
 # tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
@@ -68,8 +70,8 @@ def normalize(image):
     :param image: Tensor containing 1 or more images
     :return: Normalized tensor
     """
-    return image / 255.  # Pixel value range: [0, 1] (for use with sigmoid generator activation)
-    # return image / 127.5 - 1.  # Pixel value range: [-1, 1] (for use with tanh generator activation)
+    # return image / 255.  # Pixel value range: [0, 1] (for use with sigmoid generator activation)
+    return image / 127.5 - 1.  # Pixel value range: [-1, 1] (for use with tanh generator activation)
 
 
 def unnormalize(image):
@@ -78,8 +80,8 @@ def unnormalize(image):
     :param image: Numpy array containing 1 or more images
     :return: Numpy array with values ranging from
     """
-    return (image * 255.).astype(int)  # For input values within [0, 1] (sigmoid generator activation)
-    # return ((image + 1.) * 127.5).astype(int)  # For input values within [-1, 1] (tanh generator activation)
+    # return (image * 255.).astype(int)  # For input values within [0, 1] (sigmoid generator activation)
+    return ((image + 1.) * 127.5).astype(int)  # For input values within [-1, 1] (tanh generator activation)
 
 
 def load_image(filename):
@@ -151,7 +153,7 @@ class GanPredictionCallback(tf.keras.callbacks.Callback):
         # Write to .txt file
         with open(os.path.join(out_dir, "discriminator_results.txt"), "w") as f:
             for line in txt_file_output:
-                f.write(line)
+                f.write(line + "\n")
 
 
 def get_mmode_png_paths(mmode_dir):
@@ -170,8 +172,8 @@ def get_mmode_png_paths(mmode_dir):
 
 
 def load_pretrained_from_checkpoint(ckpt_dir):
-    pretrained = efficientnet(cfg['TRAIN']['PARAMS']['EFFICIENTNET'], (224, 90, 3), None, None)
-    pretrained.load_weights(ckpt_dir)
+    pretrained = models.efficientnet(cfg['TRAIN']['PARAMS']['EFFICIENTNET'], (224, 90, 3), None, None)
+    pretrained.load_weights(ckpt_dir).expect_partial()
     return pretrained
     # input = tf.keras.layers.Input(input_shape)
     # x = tf.keras.layers.Resizing(90, 224)(input)
@@ -190,26 +192,31 @@ def train_single(mmode_dir, output_dir, batch_size, epochs, num_classes, ckpt_di
     :param ckpt_dir: String, path to directory containing checkpoint of pretrained model being explained
     """
     # Get list of mmode paths
-    mmodes = get_mmode_png_paths(mmode_dir)[:300]
+    mmodes = get_mmode_png_paths(mmode_dir)
+    # This is needed since conditional bn doesn't work with partial batches
+    mmodes = mmodes[:len(mmodes) - len(mmodes) % batch_size]
+    print("Actual number of mmodes used:", len(mmodes))
     if len(mmodes) == 0:
-        print("Not training because no mmodes found in directory provided")
+        print("Not training because not enough mmodes to fill a single batch were found")
         return
 
     # Make dataset of real images
     ds = tf.data.Dataset.from_tensor_slices(mmodes)
-    ds = ds.shuffle(len(mmodes)).map(load_image).batch(batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
+    ds = ds.shuffle(len(mmodes)).map(load_image).enumerate().batch(batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
 
     # Define callbacks
-    num_pred_images = 1  # Number of real images that will be used for prediction callback
+    num_pred_images = 3  # Number of real images that will be used for prediction callback
     pred_image_paths = mmodes if len(mmodes) < num_pred_images else mmodes[:num_pred_images]
     callbacks = [CustomModelCheckpoint(os.path.join(output_dir, 'models'), 5),
                  GanPredictionCallback(os.path.join(output_dir, 'predictions'), pred_image_paths, num_classes),
                  TensorBoard(log_dir=os.path.join(output_dir, 'tensorboard'), histogram_freq=1, profile_batch='30, 100')]
 
-    # pretrained = load_pretrained_from_checkpoint(ckpt_dir)
+    # pretrained = load_pretrained_from_checkpoint(cfg['MODEL_PATH'])
+    # print(pretrained)
+
     # gan = ExaggerationGan(input_shape, batch_size, pretrained, d_per_g=5)
     gan = ExaggerationGan(input_shape, batch_size, None, d_per_g=5)
-    gan.compile(Adam(), Adam())
+    gan.compile(Adam(learning_rate=.0002, beta_1=0., beta_2=0.9), Adam(learning_rate=.0002, beta_1=0., beta_2=0.9))
     gan.fit(ds, epochs=epochs, callbacks=callbacks, verbose=True)
 
 

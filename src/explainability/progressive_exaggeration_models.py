@@ -101,8 +101,8 @@ class GeneratorModel:
         x = BatchNormalization()(x)
         x = Activation("relu")(x)
         x = Conv2D(self.input_shape[-1], 3, padding="same")(x)
-        # generated = Activation("tanh", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
-        generated = Activation("sigmoid", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
+        generated = Activation("tanh", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
+        # generated = Activation("sigmoid", dtype="float32")(x)  # dtype="float32" necessary for mixed precision
 
         model = Model([input, target], [generated, encoded], name="Generator")
         return model
@@ -131,7 +131,7 @@ class DiscriminatorModel:
         conv = Conv2D(num_filters, 3, padding="same")
         return SpectralNormalization(conv) if spec_norm else conv
 
-    def resblock(self, input, num_filters, downsample=True, first=False, spec_norm=False):
+    def resblock(self, input, num_filters, downsample=True, first=False, spec_norm=True):
         """
         Residual block for the discriminator model.
         :param input: Input to resblock
@@ -196,7 +196,7 @@ class DiscriminatorModel:
 
 
 class ExaggerationGan(Model):
-    def __init__(self, input_shape, batch_size, pred_model, d_per_g=1, gen_model=None, disc_model=None):
+    def __init__(self, input_shape, batch_size, pred_model, d_per_g=1, gen_model=None, disc_model=None, print_summary=False):
         """
         :param input_shape: Shape of input images
         :param batch_size: Batch size of GAN
@@ -204,6 +204,7 @@ class ExaggerationGan(Model):
         :param d_per_g: Int, number of discriminator steps for each generator step.
         :param gen_model: Generator model. If None, initializes a new generator model with random weights
         :param disc_model: Discriminator model. If None, initializes a new discriminator model with random weights
+        :param print_summary: Boolean flag. If True, prints the summary of
         """
         super().__init__()
         self.in_shape = input_shape
@@ -211,10 +212,14 @@ class ExaggerationGan(Model):
         self.pred_model = pred_model
         # self.file_writer = tf.summary.create_file_writer(logdir)
         self.num_classes = 10  # TODO: Make number of classes variable (remember to also alter bucket calculations)
-        self.d_per_g = d_per_g
-        self.step = 0
+        self.d_per_g = d_per_g * batch_size  # Multiply by batch size if using enumerated dataset
+
         self.generator = GeneratorModel(input_shape, self.num_classes).get_model() if gen_model is None else gen_model
         self.discriminator = DiscriminatorModel(input_shape).get_model() if disc_model is None else disc_model
+        if print_summary:
+            self.generator.summary()
+            self.discriminator.summary()
+
         self.gen_loss_tracker = tf.keras.metrics.Mean(name="generator_loss")
         self.disc_loss_tracker = tf.keras.metrics.Mean(name="discriminator_loss")
 
@@ -251,13 +256,14 @@ class ExaggerationGan(Model):
         :param real_images: 4D tensor of real images.
         :param target_labels: 1D tensor of target labels of generated images. Must have same length as real_images.
         """
+        fake_images, _ = self.generator([real_images, target_labels], training=False)  # Generate fake images
         # Open a GradientTape to record the operations run during the forward pass, which enables autodifferentiation.
         with tf.GradientTape(persistent=True) as tape:
-            fake_images, _ = self.generator([real_images, target_labels], training=True)
+            # fake_images, _ = self.generator([real_images, target_labels], training=False)
 
-            real_pred = self.discriminator(real_images, training=True)
+            real_pred = self.discriminator(real_images, training=True)  # Predictions for real images
             # tf.print(real_pred)
-            fake_pred = self.discriminator(fake_images, training=True)
+            fake_pred = self.discriminator(fake_images, training=True)  # Predictions for generated images
 
             d_loss = DiscriminatorModel.loss(real_pred, fake_pred)
         # Calculate the gradients for discriminator
@@ -266,6 +272,7 @@ class ExaggerationGan(Model):
         # Apply the gradients to the optimizer
         self.d_optimizer.apply_gradients(zip(d_gradients, self.discriminator.trainable_variables))
         self.disc_loss_tracker.update_state(d_loss)  # Monitor loss
+        return d_loss
 
     @tf.function
     def train_g_step(self, real_images, target_labels):
@@ -278,7 +285,7 @@ class ExaggerationGan(Model):
         # Open a GradientTape to record the operations run during the forward pass, which enables autodifferentiation.
         with tf.GradientTape(persistent=True) as tape:
             fake_images, _ = self.generator([real_images, target_labels], training=True)
-            fake_pred = self.discriminator(fake_images, training=True)
+            fake_pred = self.discriminator(fake_images, training=False)
             # fake_labels = tf.math.floor(self.pred_model(fake_images, training=False) * 10.)
 
             # g_loss = GeneratorModel.loss(fake_pred, target_labels, fake_labels)
@@ -289,17 +296,30 @@ class ExaggerationGan(Model):
         # Apply the gradients to the optimizer
         self.g_optimizer.apply_gradients(zip(g_gradients, self.generator.trainable_variables))
         self.gen_loss_tracker.update_state(g_loss)  # Monitor loss
+        # return tf.constant(True)
+        return g_loss
 
-    def train_step(self, real_images):
+    def train_step(self, data):
         """
-        :param real_images: Real images for training
+        :param data: Tuple of 1D tensor containing image numbers and 4D tensor containing images
         """
+        image_numbers, real_images = data  # Unpack enumerated data
+        # Generate random target labels
         target_labels = tf.random.uniform((self.batch_size,), maxval=self.num_classes - 1, dtype=tf.int32)
-        self.train_d_step(real_images, target_labels)
-        if self.step == 0:
-            self.train_g_step(real_images, target_labels)
-        self.step = (self.step + 1) % self.d_per_g
+
+        d_loss = self.train_d_step(real_images, target_labels)  # Discriminator training step
+        # tf.print(d_loss)
+
+        # Train generator if for any of the images, image_number % self.d_per_g == 0
+        train_gen = tf.reduce_any(tf.math.logical_not(tf.cast(image_numbers % self.d_per_g, tf.bool)))
+        g_loss = tf.cond(train_gen, lambda: self.train_g_step(real_images, target_labels), lambda: tf.constant(1.))
+
+        # Train generator if discriminator performed well
+        # g_loss = tf.cond(d_loss < -.5, lambda: self.train_g_step(real_images, target_labels), lambda: tf.constant(1.))
+
         return {
-            "g_loss": self.gen_loss_tracker.result(),
-            "d_loss": self.disc_loss_tracker.result(),
+            "g_loss_epoch_mean": self.gen_loss_tracker.result(),
+            "d_loss_epoch_mean": self.disc_loss_tracker.result(),
+            # "g_loss_step": g_loss,
+            # "d_loss_step": d_loss,
         }
