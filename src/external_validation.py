@@ -18,7 +18,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import Precision, Recall, AUC, TrueNegatives, TruePositives, FalseNegatives, \
     FalsePositives, Accuracy, SensitivityAtSpecificity
 from tensorflow_addons.metrics.f_scores import F1Score
-from tensorflow_addons.losses import SigmoidFocalCrossEntropy
+from tensorflow_addons.losses import SigmoidFocalCrossEntropy, sigmoid_focal_crossentropy
+from src.data.sql_utils import add_date_to_filename
 
 # cfg refers to the subdictionary of the config file pertaining to our fine-tuning experiments. cfg_full is the entire
 # loaded config file.
@@ -60,17 +61,6 @@ def write_folds_to_txt(folds, file_path):
         for id in folds[i]:
             txt.write(str(id) + '\n')
     txt.close()
-
-
-def add_date_to_filename(file):
-    '''
-    Labels a file name with useful information about date and time.
-    :param file: name of file as string
-    :return labelled_filename: name of file joined with date and time info.
-    '''
-    cur_date = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    labelled_filename = file + '_' + cur_date
-    return labelled_filename
 
 
 def check_performance(df):
@@ -119,6 +109,47 @@ def get_external_clip_df():
     return external_df
 
 
+def save_eval_results(model_path, test_set, trial_folder, metrics, verbose=True):
+    '''
+    Evaluates the model at model_path on test_set, saves results into .csv format.
+    :param model_path: Full path to evaluate on test_set.
+    :param test_set: TF DataSet on which to evaluate model.
+    :param trial_folder: Full path to folder in which to save metric results.
+    :param metrics: List of metrics to report.
+    :param verbose: Boolean. Specifies whether to print metric results.
+    :return: Pandas DataFrame. Contains metric results for model evaluation on test set.
+    '''
+    model = load_model(model_path, compile=False)
+    model_config = cfg_full['TRAIN']['PARAMS']['EFFICIENTNET']
+    lr = cfg['FINETUNE']['LR']
+    optimizer = Adam(learning_rate=lr)
+    model.compile(loss=SigmoidFocalCrossEntropy(reduction=tf.keras.losses.Reduction.AUTO,
+                                                alpha=model_config['ALPHA'],
+                                                gamma=model_config['GAMMA']),
+                  optimizer=optimizer, metrics=metrics)
+    test_results = model.evaluate(test_set)
+    if verbose:
+        print('TEST RESULTS:')
+        print(test_results)
+
+    metrics = ['loss']
+    cfg_thresh = cfg['FINETUNE']['METRIC_THRESHOLDS']
+    for bound_set in cfg_thresh:
+        if cfg_thresh[bound_set] is None:
+            continue
+        for t in cfg_thresh[bound_set]:
+            metrics.append(t.lower())
+    metrics_df = pd.DataFrame([test_results], columns=metrics)
+
+    file_path = os.path.join(trial_folder, add_date_to_filename('sens_spec_results') + '.csv')
+
+    if verbose:
+        print(metrics_df)
+
+    metrics_df.to_csv(file_path, columns=metrics_df.columns, index_label=False, index=False)
+    return metrics_df
+
+
 # TAAFT stands for: Threshold-Aware Accumulative Fine-Tuner
 class TAAFT:
     '''
@@ -146,8 +177,8 @@ class TAAFT:
         no_sliding_df = self.clip_df[self.clip_df['pleural_line_findings'] == 'absent_lung_sliding']
 
         # Get unique patient ids.
-        sliding_ids = sliding_df.patient_id.unique()
-        no_sliding_ids = no_sliding_df.patient_id.unique()
+        sliding_ids = sliding_df['patient_id'].unique()
+        no_sliding_ids = no_sliding_df['patient_id'].unique()
 
         print("{} unique sliding patient ids found.".format(len(sliding_ids)))
         print("{} unique no-sliding patient ids found.\n".format(len(no_sliding_ids)))
@@ -201,9 +232,9 @@ class TAAFT:
             for i in range(size):
                 cur_id = sliding_ids[-1]
                 sliding_ids = sliding_ids[:-1]
-                cur_fold.append(cur_id)
-                clips_by_id = sliding_df[sliding_df['patient_id'] == cur_id]
+                clips_by_id = sliding_df[sliding_df['patient_id'] == cur_id]['id'].values
                 sliding_count += len(clips_by_id)
+                cur_fold.extend(clips_by_id)
             folds.append(cur_fold)
             cur_fold = []
             cur_fold_num += 1
@@ -219,10 +250,10 @@ class TAAFT:
             if len(no_sliding_ids) == 0:
                 break
             cur_id = no_sliding_ids[-1]
-            folds[i % num_folds].append(cur_id)
             no_sliding_ids = no_sliding_ids[:-1]
-            clips_by_id = no_sliding_df[no_sliding_df['patient_id'] == cur_id]
+            clips_by_id = no_sliding_df[no_sliding_df['patient_id'] == cur_id]['id'].values
             no_sliding_count = len(clips_by_id)
+            folds[i % num_folds].extend(clips_by_id)
             if i < num_folds:
                 no_sliding.append(no_sliding_count)
             else:
@@ -311,12 +342,23 @@ class TAAFT:
         cur_fold_num = 0
         num_folds_added = 0  # number of external data slices that have been added to the training set
         add_set = []
-        # Loop until all external data has been used up.
-        while num_folds_added < cfg['FOLD_SAMPLE']['NUM_FOLDS']:
+        min_test_size = int(len(ext_df) * cfg['MIN_TEST_SIZE'])
+
+        # After .npz conversion, clip ids are followed by indices. Ignore these indices for patient id retrieval by
+        # clip id.
+        original_clip_ids = pd.DataFrame(ext_df['id'].str[:-2], columns=['id'])
+        clip_id_count = original_clip_ids.groupby(['id']).transform('count')
+        original_clip_ids = pd.concat([original_clip_ids, clip_id_count], axis=1)
+        ext_df = ext_df.drop(columns=['id'])
+        ext_df = pd.concat([original_clip_ids, ext_df], axis=1)
+
+        # Loop until external testing set has reached minimum size.
+        while len(ext_df) >= min_test_size:
             print('\n======================= FINE-TUNING ON {} OF {} SLICES OF EXTERNAL DATA ========================\n'
                   .format(str(num_folds_added + 1), len(fold_list)))
             # Evaluate the model on the external test set. Note that we load the original pre-finetuned model at each
-            # iteration to minimize codependence between runs of a given trial.
+            # iteration to minimize co-dependence between runs of a given trial.
+            print('Evaluating model performance before fine-tuning...')
             model = load_model(cfg_full['PREDICT']['MODEL'], compile=False)
             pred_labels, probs = predict_set(model, ext_df)
             # Can change these metrics as necessary
@@ -336,17 +378,27 @@ class TAAFT:
             res_df = pd.DataFrame([results], columns=metric_names)
 
             predictions_path = os.getcwd() + cfg['PATHS']['PREDICTIONS_OUT']
-            if not os.path.exists(predictions_path):
-                os.makedirs(predictions_path)
-
-            if cfg['REFRESH_FOLDERS']:
-                refresh_folder(predictions_path)
 
             # Save the metric result DataFrame.
             csv_name = add_date_to_filename('') + '_metrics.csv'
             res_df.to_csv(os.path.join(predictions_path, csv_name), index=False)
-            print("Metric results saved to", predictions_path)
+            print("Pre-finetune metric results saved to", predictions_path)
+
+            # Load the original model from scratch (without any fine-tuning).
+            model_config = cfg_full['TRAIN']['PARAMS']['EFFICIENTNET']
+
+            # Record loss value on external test set before fine-tuning.
+            true_labels = np.array(ext_df['label']).astype(np.float)
+            loss_value = np.array(sigmoid_focal_crossentropy(y_true=true_labels, y_pred=probs))
+            loss_value = loss_value / len(probs)
+            loss_value = pd.DataFrame([loss_value], columns=['loss'])
+            res_df = pd.concat([loss_value, res_df], axis=1)
             print(res_df)
+
+            # Save the model's loss/sens/spec results for 0% external data
+            if num_folds_added == 0:
+                file_path = os.path.join(trial_folder, add_date_to_filename('sens_spec_results') + '.csv')
+                res_df.to_csv(file_path, columns=res_df.columns, index_label=False, index=False)
 
             # If the model performs well on the external test set, save it! (Stop the trial here.)
             if check_performance(res_df):
@@ -358,11 +410,10 @@ class TAAFT:
 
             # Set aside some external data to be added to the existing training data.
             add_set = fold_list[num_folds_added]
-            add_df = ext_df[ext_df['patient_id'].isin(add_set)]
+            add_df = ext_df[ext_df['id'].isin(add_set)]
 
             # Remove the augmentation data from the external dataset. Becomes the new testing set.
-            ext_df = ext_df[~ext_df['patient_id'].isin(add_set)]
-            print('\n{} records removed from the external dataset for training.'.format(len(add_df)))
+            ext_df = ext_df[~ext_df['id'].isin(add_df['id'])]
 
             # Augment the training data.
             train_df = pd.concat([train_df, add_df])
@@ -375,7 +426,7 @@ class TAAFT:
 
             # Create training and validation sets for fine-tuning.
             sub_val_df = train_df.tail(int(len(train_df) * cfg['FINETUNE']['VAL_SPLIT']))
-            sub_train_df = train_df[~train_df.isin(sub_val_df['patient_id'].unique())]
+            sub_train_df = train_df[~train_df.isin(sub_val_df['id'])]
 
             # Model fine-tuning.
             print('Fine-tuning...')
@@ -412,7 +463,7 @@ class TAAFT:
                 os.makedirs(tensorboard_path)
 
             # Log metrics
-            log_dir = add_date_to_filename(cfg_full['TRAIN']['PATHS']['TENSORBOARD'])
+            log_dir = add_date_to_filename(os.getcwd() + cfg_full['TRAIN']['PATHS']['TENSORBOARD'])
 
             # uncomment line below to include tensorboard profiler in callbacks
             # basic_call = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1, profile_batch=1)
@@ -431,20 +482,20 @@ class TAAFT:
             # Early stopping
             early_stopping = EarlyStopping(monitor='val_loss', verbose=1, patience=cfg_full['TRAIN']['PATIENCE'],
                                            mode='min',
-                                           restore_best_weights=True)
+                                           restore_best_weights=True, min_delta=0.0001)
 
             # Log model params to tensorboard
             writer2 = tf.summary.create_file_writer(log_dir + '/test')
             if log_dir is not None:
                 log_train_params(writer1, hparams)
 
-            model_config = cfg_full['TRAIN']['PARAMS']['EFFICIENTNET']
+
             lr = cfg['FINETUNE']['LR']
 
             optimizer = Adam(learning_rate=lr)
             model.compile(loss=SigmoidFocalCrossEntropy(reduction=tf.keras.losses.Reduction.AUTO,
-                                                        alpha=model_config['ALPHA'],
-                                                        gamma=model_config['GAMMA']),
+                                     alpha=model_config['ALPHA'],
+                                     gamma=model_config['GAMMA']),
                           optimizer=optimizer, metrics=metrics)
 
             # Train and save the model
@@ -460,26 +511,26 @@ class TAAFT:
                         tf.summary.text(name='Early Stopping', data=tf.convert_to_tensor('Training stopped early'),
                                         step=0)
 
-            test_results = model.evaluate(test_set)
-            print(test_results)
+            current_model_path = os.path.join(model_out_dir, os.listdir(model_out_dir)[-1])
+            metrics_df = save_eval_results(current_model_path, test_set, trial_folder, metrics)
 
-            metrics = ['loss']
-            cfg_thresh = cfg['FINETUNE']['METRIC_THRESHOLDS']
-            for bound_set in cfg_thresh:
-                if cfg_thresh[bound_set] is None:
-                    continue
-                for t in cfg_thresh[bound_set]:
-                    metrics.append(t.lower())
-            metrics_df = pd.DataFrame([test_results], columns=metrics)
+            # If the fine-tuned model now performs well on the test set, terminate the trial early.
+            if check_performance(metrics_df) and lazy:
+                break
 
             gc.collect()
             tf.keras.backend.clear_session()
             del model
 
-            # Save results
-            file_path = os.path.join(os.getcwd() + cfg['PATHS']['EXPERIMENTS'], add_date_to_filename('sens_spec_results') + '.csv')
-            print(metrics_df)
-            metrics_df.to_csv(file_path, columns=metrics_df.columns, index_label=False, index=False)
+            if len(ext_df) < min_test_size:
+                print('BRINGING BACK PREVIOUS MODELS...')
+                # Folder to save evaluation results of previous models on minimum size test set.
+                bonus_eval_folder = os.path.join(os.getcwd() + cfg['PATHS']['TRIALS'], 'bonus_eval')
+                if not os.path.exists(bonus_eval_folder):
+                    os.makedirs(bonus_eval_folder)
+                for model_info in os.listdir(model_out_dir)[:-1]:
+                    model_path = os.path.join(model_out_dir, model_info)
+                    _ = save_eval_results(model_path, test_set, bonus_eval_folder, metrics)
 
             cur_fold_num += 1
             num_folds_added += 1
@@ -495,6 +546,17 @@ class TAAFT:
         elif cfg['REFRESH_FOLDERS']:
             refresh_folder(trial_path)
             refresh_folder(os.getcwd() + cfg['PATHS']['EXPERIMENTS'])
+
+        predictions_path = os.getcwd() + cfg['PATHS']['PREDICTIONS_OUT']
+        if not os.path.exists(predictions_path):
+            os.makedirs(predictions_path)
+
+        bonus_eval_folder = os.path.join(os.getcwd() + cfg['PATHS']['TRIALS'], 'bonus_eval')
+        if not os.path.exists(bonus_eval_folder):
+            os.makedirs(bonus_eval_folder)
+        elif cfg['REFRESH_FOLDERS']:
+            refresh_folder(bonus_eval_folder)
+
         for trial in range(n_trials):
             cur_trial_dir = os.path.join(trial_path, 'trial_{}'.format(trial + 1))
             if not os.path.exists(cur_trial_dir):
